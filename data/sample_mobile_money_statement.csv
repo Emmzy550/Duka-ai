@@ -1,0 +1,5 @@
+Date,Provider,Description,Amount,Transaction Type
+2026-04-01,MTN Mobile Money,Customer payment,1200,Credit
+2026-04-01,MTN Mobile Money,Supplier payment,700,Debit
+2026-04-02,MTN Mobile Money,Customer payment,900,Credit
+2026-04-02,MTN Mobile Money,Transport payment,100,Debit

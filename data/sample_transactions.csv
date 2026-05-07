@@ -1,0 +1,10 @@
+Date,Provider,Description,Category,Amount,Type
+2026-04-01,MTN Mobile Money,Customer payment,Sales,1200,Revenue
+2026-04-01,MTN Mobile Money,Stock purchase,Supplier,700,Expense
+2026-04-02,Airtel Money,Customer payment,Sales,900,Revenue
+2026-04-02,Airtel Money,Transport payment,Transport,100,Expense
+2026-04-03,Bank Account,Shop rent,Rent,500,Expense
+2026-04-04,MTN Mobile Money,Customer payment,Sales,1500,Revenue
+2026-04-05,Bank Account,Supplier debt payment,Debt,500,Debt
+2026-04-06,Zamtel Money,Customer payment,Sales,900,Revenue
+2026-04-06,Zamtel Money,Utility payment,Utilities,250,Expense

@@ -1,0 +1,14 @@
+[
+  {
+    "title": "Lusaka Grocery Shop",
+    "input": "I run a small grocery shop in Lusaka. This week I made K4,500 in sales. I spent K2,700 on stock, K500 on rent, K250 on transport, and K300 on other expenses. I also owe K1,000 to my supplier. Can I afford to take a K3,000 loan?"
+  },
+  {
+    "title": "Salon Slow Month",
+    "input": "I own a salon in Ndola. Last week I made K3,200. I spent K1,100 on products, K900 on rent, K250 on transport, and K400 on other expenses. January has been slow. What should I improve?"
+  },
+  {
+    "title": "Farmer Restocking Decision",
+    "input": "I am a farmer near Kabwe. I made 6800 from produce sales and spent 4200 on inputs and transport. I still owe K1500 and I want to borrow K2000 for the next planting cycle. Is that safe?"
+  }
+]

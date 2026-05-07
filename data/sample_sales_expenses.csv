@@ -1,0 +1,6 @@
+Date,Description,Category,Amount,Type
+2026-04-01,Daily sales,Sales,1200,Revenue
+2026-04-01,Stock purchase,Stock,700,Expense
+2026-04-02,Transport,Transport,100,Expense
+2026-04-02,Customer sales,Sales,900,Revenue
+2026-04-03,Supplier debt,Debt,500,Debt

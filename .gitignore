@@ -1,0 +1,15 @@
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+streamlit.log
+streamlit.err.log
+
+# Runtime user data / local tooling
+user_schedules.json
+.claude/
+.vscode/
+
+# One-off spreadsheets dropped in repo root (keep curated samples under data/)
+/Duka_AI_Income_Statement*.xlsx
+/FinAgent*.xlsx

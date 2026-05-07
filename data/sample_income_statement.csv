@@ -1,0 +1,6 @@
+Date,Item,Category,Amount,Type
+2026-04-01,Sales revenue,Sales,4500,Revenue
+2026-04-01,Stock purchases,Cost of Goods Sold,2700,Expense
+2026-04-01,Rent,Operating Expense,500,Expense
+2026-04-01,Transport,Operating Expense,250,Expense
+2026-04-01,Other expenses,Operating Expense,300,Expense
