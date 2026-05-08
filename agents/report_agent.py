@@ -11,7 +11,7 @@ Design contract
 from __future__ import annotations
 
 import datetime
-from typing import Any
+from typing import Any, Callable
 
 from agents import request_llm_json
 
@@ -32,9 +32,10 @@ _EXEC_SUMMARY_SYSTEM = (
     "You are writing the Executive Summary of a professional financial report for a Zambian SME. "
     "Return ONLY valid JSON with one key:\n"
     '{"summary": "<three sentences>"}\n\n'
-    "Sentence 1: overall financial health with exact numbers (revenue, profit, margin).\n"
-    "Sentence 2: the single biggest challenge or risk — be specific, include numbers.\n"
+    "Sentence 1: name the business context if given in the financial context header; state revenue, expenses, profit, margin %, debt — all with exact K amounts from the context.\n"
+    "Sentence 2: the single biggest challenge or risk — name a category or ratio with numbers, not vague wording alone.\n"
     "Sentence 3: the single most impactful recommendation with expected K impact.\n"
+    "Do NOT use empty hedge phrases ('moderate cash flow situation', 'thin margin') without the exact figures from the context in the same sentence. "
     "Use K for Kwacha. Do not include markdown, newlines, or extra keys."
 )
 
@@ -98,14 +99,28 @@ def generate_full_report(
     metrics: dict,
     report: dict,
     business_profile: dict | None = None,
+    *,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Any]:
     """Return a complete structured report dict ready for rendering and export.
 
     Numbers come from baseline / metrics / report (all Python-computed).
     LLM contributes only executive summary, recommendations, and risks — always
     grounded in the numeric context passed to it.
+
+    on_progress: optional callback ``(step, total_steps, label)`` invoked as work advances
+    (for UI progress). total_steps is fixed for the whole run.
     """
     from tools.financial_engine import compute_expense_breakdown, calculate_forecast
+
+    _total_phases = 6
+    _step = 0
+
+    def _progress(detail: str) -> None:
+        nonlocal _step
+        _step += 1
+        if on_progress is not None:
+            on_progress(_step, _total_phases, detail)
 
     cf     = report.get("cashflow",  {})
     loan   = report.get("loan",      {})
@@ -118,18 +133,33 @@ def generate_full_report(
     margin = _n(metrics.get("profit_margin_pct"))
     exp_pct = 100 * exp / max(rev, 1)
 
+    _progress(
+        "Locking in verified figures — revenue, expenses, profit, margin, debt & scores "
+        "(all from your last analysis, in Kwacha)."
+    )
+
     # Python: expense categories
     breakdown   = compute_expense_breakdown(report) or {}
     categories  = breakdown.get("categories", [])
+    _progress(
+        "Mapping expenses into categories with Python (no AI) — uses your uploaded or entered records."
+    )
 
     # Python: 6-month base-case forecast
     fc   = calculate_forecast(baseline, "base_case", months=6)
     fc_s = fc["summary"]
+    _progress(
+        "Running a 6-month **base-case** cash-flow & profit projection (Python engine, same as Forecast page)."
+    )
 
     # LLM: narrative only
     ctx              = _build_context(baseline, metrics, report)
     existing_actions = adv.get("next_actions", [])
 
+    _progress(
+        "Calling the model for the **executive summary** only — must quote your exact K amounts; "
+        "no invented numbers."
+    )
     exec_json = request_llm_json(
         _EXEC_SUMMARY_SYSTEM,
         f"Financial context:\n{ctx}\nCash flow summary to expand on: {cf.get('summary', '')}",
@@ -141,6 +171,10 @@ def generate_full_report(
         or "Analysis complete. Review the sections below for your financial health details."
     )
 
+    _progress(
+        "Calling the model for **recommendations & risks** — tied to your ratios, loan score, "
+        "and advisor actions from Chat Advisor."
+    )
     recs_json = request_llm_json(
         _RECS_RISKS_SYSTEM,
         f"Financial context:\n{ctx}\nExisting advisor actions: {'; '.join(existing_actions)}",
@@ -151,6 +185,11 @@ def generate_full_report(
         for a in existing_actions[:3]
     ]
     risks = (recs_json or {}).get("risks") or cf.get("warnings", [])[:2]
+
+    _progress(
+        "Merging cash-flow narrative, loan readiness, market intel, and forecast KPIs into one "
+        "download-ready package (PDF + spreadsheet next)."
+    )
 
     bp = business_profile or {}
     return {

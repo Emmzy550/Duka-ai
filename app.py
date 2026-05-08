@@ -521,7 +521,7 @@ def render_metric_grid(report: dict[str, Any]) -> None:
     p_label, p_value, p_color = _profit_label_value(profit)
     p_note = "What remains after expenses." if profit >= 0 else "Expenses exceed revenue — this business is at a loss."
     items = [
-        ("Revenue", format_currency(cashflow["revenue"]), "Money coming into the business.", THEME["emerald"], "$"),
+        ("Revenue", format_currency(cashflow["revenue"]), "Money coming into the business.", THEME["emerald"], "K"),
         ("Expenses", format_currency(cashflow["expenses"]), "Costs and outgoing spending.", THEME["orange"], "#"),
         (p_label, p_value, p_note, p_color, "+" if profit >= 0 else "⚠"),
         ("Profit Margin", f'{cashflow["profit_margin"]:.1f}%', "Profit as a share of revenue.", THEME["gold"], "%"),
@@ -713,15 +713,23 @@ def inject_ui_behavior(
             }}
         }});
 
-        const analyzeButton = findButton("⚡ Analyze My Business →");
+        const analyzeLabel = "⚡ Run Full Business Analysis";
+        let analyzeButton = findButton(analyzeLabel);
+        if (!analyzeButton) {{
+            analyzeButton = findButton("⚡ Analyze My Business →");
+        }}
         if (analyzeButton) {{
             analyzeButton.classList.add("duka-ai-analyze-btn");
-            analyzeButton.id = "duka-ai-analyze-anchor";
-            if (scrollRequested) {{
-                window.setTimeout(() => {{
+        }}
+        if (scrollRequested) {{
+            window.setTimeout(() => {{
+                var anchorEl = doc.getElementById("duka-ai-analyze-anchor");
+                if (anchorEl) {{
+                    anchorEl.scrollIntoView({{ behavior: "smooth", block: "start" }});
+                }} else if (analyzeButton) {{
                     analyzeButton.scrollIntoView({{ behavior: "smooth", block: "center" }});
-                }}, 220);
-            }}
+                }}
+            }}, 260);
         }}
         </script>
         """,
@@ -1090,7 +1098,7 @@ def render_financial_chart(report: dict[str, Any]) -> None:
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color=THEME["text"], family="Segoe UI, Arial, sans-serif"),
         xaxis=dict(showgrid=False, title=""),
-        yaxis=dict(title="Amount (ZMW)", gridcolor="rgba(100, 116, 139, 0.18)", zeroline=False),
+        yaxis=dict(title="Amount (Kwacha)", gridcolor="rgba(100, 116, 139, 0.18)", zeroline=False),
         showlegend=False,
     )
     st.plotly_chart(figure, use_container_width=True)
@@ -1292,7 +1300,7 @@ def render_followup_chart(chart: dict[str, Any]) -> None:
             hovertemplate="%{x}: K%{y:,.2f}<extra></extra>",
         ))
         fig.update_layout(
-            yaxis=dict(title="Amount (ZMW)", gridcolor="rgba(100,116,139,0.15)", zeroline=True),
+            yaxis=dict(title="Amount (Kwacha)", gridcolor="rgba(100,116,139,0.15)", zeroline=True),
             **base_layout,
         )
 
@@ -1309,7 +1317,7 @@ def render_followup_chart(chart: dict[str, Any]) -> None:
                 hovertemplate=f"%{{x}}: K%{{y:,.2f}}<extra>{series['name']}</extra>",
             ))
         fig.update_layout(
-            yaxis=dict(title="Amount (ZMW)", gridcolor="rgba(100,116,139,0.15)", zeroline=False),
+            yaxis=dict(title="Amount (Kwacha)", gridcolor="rgba(100,116,139,0.15)", zeroline=False),
             legend=dict(orientation="h", y=1.08),
             **base_layout,
         )
@@ -1475,10 +1483,99 @@ def init_session_state() -> None:
         "form_prefilled": False,
         "scroll_to_numbers": False,
         "scroll_to_results": False,
+        "scroll_to_chat_conversation": False,
+        "pending_demo_analysis_run": False,
+        "scroll_to_demo_analyze": False,
         "hide_example_prompts": False,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
+
+
+class _LocalUploadShim:
+    """Mimic Streamlit's UploadedFile API so bundled samples can flow through
+    `parse_uploaded_file` without an actual file_uploader event."""
+
+    def __init__(self, path: Path) -> None:
+        self._bytes = path.read_bytes()
+        self.name = path.name
+        self.size = len(self._bytes)
+
+    def getvalue(self) -> bytes:
+        return self._bytes
+
+
+def _load_demo_analysis() -> bool:
+    """Load a bundled sample document and prep all session state required by
+    the analysis pipeline. Sets `auto_run_demo` so the main page kicks off
+    Run Full Business Analysis automatically on the next render.
+
+    Returns True on success, False if the sample file is unavailable.
+    """
+    demo_path = SAMPLE_TEMPLATES.get("Income Statement CSV")
+    if demo_path is None or not Path(demo_path).exists():
+        return False
+
+    shim = _LocalUploadShim(Path(demo_path))
+    try:
+        parsed = parse_uploaded_file(shim, "Income Statement")
+    except Exception:
+        return False
+
+    for _k in (
+        "baseline", "metrics", "parsed_document",
+        "manual_revenue", "manual_expenses", "manual_profit",
+        "document_revenue", "document_expenses",
+        "generated_report", "analysis_report",
+    ):
+        st.session_state.pop(_k, None)
+    for _k in [k for k in st.session_state if k.startswith("forecast_summary_")]:
+        del st.session_state[_k]
+    st.session_state["forecast_chat"] = []
+
+    st.session_state["business_type"] = "Grocery shop"
+    st.session_state["location"] = "Lusaka"
+    st.session_state["products_services"] = "Groceries, mealie meal, drinks"
+    st.session_state["main_question"] = "Should I restock or save cash?"
+    st.session_state["manual_notes"] = (
+        "I run a small grocery shop in Lusaka. This week I made K4,500 in sales. "
+        "I spent K2,700 on stock, K500 on rent, K250 on transport, and K300 on other expenses. "
+        "I owe K1,000 to my supplier."
+    )
+    st.session_state["manual_debt"] = 1000.0
+
+    st.session_state["parsed_document"] = parsed
+    doc_rev = float(parsed.get("revenue") or 0)
+    doc_exp = float(parsed.get("expenses") or 0)
+    if doc_rev > 0 or doc_exp > 0:
+        st.session_state["manual_revenue"] = doc_rev
+        st.session_state["manual_expenses"] = doc_exp
+        baseline = {
+            "monthly_revenue":  doc_rev,
+            "monthly_expenses": doc_exp,
+            "monthly_profit":   doc_rev - doc_exp,
+            "months_of_data":   int(parsed.get("months_of_data") or 1),
+            "source": (
+                f"Demo sample: {parsed.get('document_type', 'document')} "
+                f"({Path(demo_path).name})"
+            ),
+            "expenses_breakdown": parsed.get("expenses_breakdown", {}),
+        }
+        st.session_state["baseline"] = baseline
+        st.session_state["metrics"] = compute_metrics(baseline)
+
+    st.session_state["_doc_fingerprint"] = f"{shim.name}:{shim.size}"
+    st.session_state["numbers_entry_mode"] = "upload"
+    st.session_state["hide_example_prompts"] = True
+    st.session_state["show_welcome"] = False
+    st.session_state["form_prefilled"] = True
+    st.session_state["scroll_to_numbers"] = False
+    st.session_state["auto_run_demo"] = True
+    st.session_state["demo_mode_active"] = True
+    st.session_state["pending_demo_analysis_run"] = True
+    st.session_state["scroll_to_demo_analyze"] = True
+    st.session_state["scroll_target"] = "duka-ai-analyze-anchor"
+    return True
 
 
 def render_welcome_screen(_sample_cases: list[dict]) -> None:
@@ -1504,36 +1601,55 @@ def render_welcome_screen(_sample_cases: list[dict]) -> None:
         st.markdown(
             """
             <div class="welcome-option-card">
-                <div class="woc-icon">🏪</div>
-                <div class="woc-title">Try Sample Business</div>
+                <div class="woc-badge">⭐ Recommended</div>
+                <div class="woc-icon">⚡</div>
+                <div class="woc-title">Try Demo Analysis</div>
                 <div class="woc-desc">
-                    Opens the guided flow with <strong>Lusaka Grocery Shop</strong> already filled in
-                    — add a document below or run analysis from the sample notes.
+                    One click loads a real sample <strong>income statement</strong>, pre-fills the
+                    business profile, and runs the full multi-agent analysis automatically — perfect
+                    for first-time visitors.
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Try Sample Business →", key="welcome_sample", use_container_width=True, type="primary"):
-            # Pre-fill Lusaka sample; show upload section (same as "Upload Documents") without repeating example cards
-            st.session_state.business_type = "Grocery shop"
-            st.session_state.location = "Lusaka"
-            st.session_state.products_services = "Groceries, mealie meal, drinks"
-            st.session_state.main_question = "Should I restock or save cash?"
-            st.session_state.manual_notes = (
-                "I run a small grocery shop in Lusaka. This week I made K4,500 in sales. "
-                "I spent K2,700 on stock, K500 on rent, K250 on transport, and K300 on other expenses. "
-                "I owe K1,000 to my supplier."
-            )
-            st.session_state.manual_revenue = 4500.0
-            st.session_state.manual_expenses = 3750.0
-            st.session_state.manual_debt = 1000.0
-            st.session_state.numbers_entry_mode = "upload"
-            st.session_state.hide_example_prompts = True
-            st.session_state.show_welcome = False
-            st.session_state.form_prefilled = True
-            st.session_state.scroll_to_numbers = True
-            st.rerun()
+        if st.button("Try Demo Analysis →", key="welcome_sample", use_container_width=True, type="primary"):
+            with st.status("⚡ Starting your demo…", expanded=True) as _demo_status:
+                st.write("📂 Loading bundled sample income statement…")
+                ok = _load_demo_analysis()
+                if ok:
+                    st.write("📊 Extracting revenue, expenses, and profit from the sample…")
+                    st.write("🏪 Applying **Lusaka Grocery Shop** business profile…")
+                    _demo_status.update(label="✅ Demo ready — opening workspace…", state="complete")
+                else:
+                    st.write("⚠️ Sample CSV not found — falling back to manual figures.")
+                    _demo_status.update(label="Using manual demo figures…", state="complete")
+            if ok:
+                st.rerun()
+            else:
+                st.session_state.business_type = "Grocery shop"
+                st.session_state.location = "Lusaka"
+                st.session_state.products_services = "Groceries, mealie meal, drinks"
+                st.session_state.main_question = "Should I restock or save cash?"
+                st.session_state.manual_notes = (
+                    "I run a small grocery shop in Lusaka. This week I made K4,500 in sales. "
+                    "I spent K2,700 on stock, K500 on rent, K250 on transport, and K300 on other expenses. "
+                    "I owe K1,000 to my supplier."
+                )
+                st.session_state.manual_revenue = 4500.0
+                st.session_state.manual_expenses = 3750.0
+                st.session_state.manual_debt = 1000.0
+                st.session_state.numbers_entry_mode = "manual"
+                st.session_state.hide_example_prompts = True
+                st.session_state.show_welcome = False
+                st.session_state.form_prefilled = True
+                st.session_state.scroll_to_numbers = True
+                st.session_state.auto_run_demo = True
+                st.session_state.pending_demo_analysis_run = True
+                st.session_state.scroll_to_demo_analyze = True
+                st.session_state.scroll_target = "duka-ai-analyze-anchor"
+                st.session_state.demo_mode_active = True
+                st.rerun()
 
     with col2:
         st.markdown(
@@ -2728,15 +2844,17 @@ def render_cash_flow_forecast_page() -> None:
             annotation_font=dict(color="rgba(148,163,184,0.6)", size=10),
         )
         fig.update_layout(
-            height=460,
-            margin=dict(l=8, r=12, t=40, b=12),
+            height=480,
+            margin=dict(l=8, r=12, t=110, b=12),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(15,23,42,0.35)",
             font=dict(color="#E2E8F0", size=14, family="Segoe UI, Arial, sans-serif"),
             title=dict(
-                text="6-month outlook — revenue, expenses & profit",
-                font=dict(size=16, color="#E2E8F0"),
-                x=0,
+                text="<b>6-month outlook</b> — revenue, expenses & profit",
+                font=dict(size=17, color="#F8FAFC"),
+                x=0.005,
                 xanchor="left",
+                y=0.97,
+                yanchor="top",
             ),
             xaxis=dict(showgrid=False, tickfont=dict(size=13), color="#94A3B8"),
             yaxis=dict(
@@ -2756,7 +2874,15 @@ def render_cash_flow_forecast_page() -> None:
                 tickfont=dict(size=13),
                 tickprefix="K",
             ),
-            legend=dict(orientation="h", y=1.14, x=0, font=dict(size=13)),
+            legend=dict(
+                orientation="h",
+                y=1.07,
+                yanchor="bottom",
+                x=0,
+                xanchor="left",
+                font=dict(size=12.5),
+                bgcolor="rgba(15,23,42,0)",
+            ),
             bargap=0.32, hovermode="x unified",
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -2855,7 +2981,7 @@ def render_cash_flow_forecast_page() -> None:
         for idx, (label, prompt_text) in enumerate(sugg_pills):
             if st.button(label, key=f"fpill_{idx}", use_container_width=True):
                 st.session_state["forecast_question"] = prompt_text
-                st.session_state["forecast_should_scroll_analysis"] = True
+                st.session_state["forecast_pin_to_question"] = True
                 st.rerun()
 
     # End dashboard wrapper
@@ -2869,19 +2995,6 @@ def render_cash_flow_forecast_page() -> None:
         '<div id="duka-ai-forecast-analysis-anchor"></div>',
         unsafe_allow_html=True,
     )
-    if st.session_state.pop("forecast_should_scroll_analysis", False):
-        components.html(
-            """
-            <script>
-            window.setTimeout(function() {
-                var el = window.parent.document.getElementById("duka-ai-forecast-analysis-anchor");
-                if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); }
-            }, 450);
-            </script>
-            """,
-            height=0,
-            width=0,
-        )
 
     # Centre the conversation in a narrower column so it doesn't stretch wide
     convo_left, convo_main, convo_right = st.columns([1, 4, 1], gap="small")
@@ -2902,17 +3015,30 @@ def render_cash_flow_forecast_page() -> None:
                 unsafe_allow_html=True,
             )
 
-        for msg in st.session_state["forecast_chat"]:
-            with st.chat_message(msg["role"]):
-                body = sanitize_forecast_answer_text(msg["content"])
-                st.markdown(body)
-                if msg.get("plotly_chart"):
-                    st.plotly_chart(
-                        build_plotly_chart(msg["plotly_chart"]),
-                        use_container_width=True,
-                    )
-                elif msg.get("chart"):
-                    render_followup_chart(msg["chart"])
+        for _msg_idx, msg in enumerate(st.session_state["forecast_chat"]):
+            if msg["role"] == "user":
+                escaped = (
+                    msg["content"]
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                )
+                st.markdown(
+                    f'<div class="user-bubble-wrap"><div class="user-bubble">{escaped}</div></div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                with st.chat_message("assistant", avatar="📊"):
+                    body = sanitize_forecast_answer_text(msg["content"])
+                    st.markdown(body)
+                    if msg.get("plotly_chart"):
+                        st.plotly_chart(
+                            build_plotly_chart(msg["plotly_chart"]),
+                            use_container_width=True,
+                            key=f"forecast_chat_plotly_{_msg_idx}",
+                        )
+                    elif msg.get("chart"):
+                        render_followup_chart(msg["chart"])
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -2946,8 +3072,12 @@ def render_cash_flow_forecast_page() -> None:
             if chart_data:
                 assistant_msg["plotly_chart"] = chart_data
             st.session_state["forecast_chat"].append(assistant_msg)
-            st.session_state["forecast_should_scroll_analysis"] = True
+            st.session_state["forecast_pin_to_question"] = True
             st.rerun()
+
+        # ChatGPT-style scroll: pin the user's last question to top after a reply
+        if st.session_state.pop("forecast_pin_to_question", False):
+            inject_pin_to_question_scroll()
 
 
 def render_scenario_planner_page() -> None:
@@ -3982,16 +4112,60 @@ def render_generate_report_page() -> None:
                 st.rerun()
             return
 
-        # Generating — show progress and run
-        with st.status("📄 Compiling your financial health report…", expanded=True) as status:
-            st.write("📊 Cash Flow Agent — analyzing revenue, expenses & margins…")
-            st.write("💡 Business Advisor — generating prioritized recommendations…")
-            st.write("🏦 Loan Readiness Agent — scoring creditworthiness…")
-            st.write("🌍 Market Intelligence — gathering Zambian market conditions…")
-            st.write("📄 Synthesizing all sections into your report…")
-            from agents.report_agent import generate_full_report
-            full = generate_full_report(baseline, metrics, report, bp)
-            status.update(label="✅ Report ready!", state="complete", expanded=False)
+        # Generating — phased progress (matches agents/report_agent.generate_full_report)
+        from agents.report_agent import generate_full_report
+
+        with st.status("📄 Starting financial report pipeline…", expanded=True) as status:
+            st.markdown(
+                "**Typical duration:** about **15–60 seconds**, depending on API latency. "
+                "Every Kwacha amount is taken from Python-verified calculations first; "
+                "the AI only writes narrative text grounded in those numbers."
+            )
+            st.caption(
+                "Pipeline: verified snapshot → expense categories → 6-month base-case forecast "
+                "→ AI executive summary → AI recommendations & risks → merge for PDF/Excel export."
+            )
+            prog = st.progress(0)
+
+            def _on_report_progress(step: int, total: int, detail: str) -> None:
+                pct = min(step / max(total, 1), 1.0)
+                try:
+                    prog.progress(pct, text=f"Step {step}/{total}")
+                except TypeError:
+                    prog.progress(pct)
+                short = detail if len(detail) <= 80 else detail[:77] + "…"
+                status.update(label=f"📄 {short}", state="running")
+                st.markdown(f"##### Step {step} of {total}")
+                st.markdown(detail)
+                st.divider()
+
+            try:
+                full = generate_full_report(
+                    baseline, metrics, report, bp, on_progress=_on_report_progress
+                )
+            except Exception as exc:
+                st.session_state["_report_generating"] = False
+                try:
+                    prog.progress(0, text="Stopped")
+                except TypeError:
+                    prog.progress(0)
+                status.update(
+                    label="❌ Report generation failed — see details below",
+                    state="error",
+                    expanded=True,
+                )
+                st.exception(exc)
+                return
+
+            try:
+                prog.progress(1.0, text="Done")
+            except TypeError:
+                prog.progress(1.0)
+            status.update(
+                label="✅ Report compiled — scroll down for preview and downloads.",
+                state="complete",
+                expanded=False,
+            )
 
         st.session_state["generated_report"] = full
         st.session_state["_report_generating"] = False
@@ -4719,6 +4893,12 @@ def render_market_intel_page() -> None:
 
     market = report.get("market", {})
 
+    st.markdown(
+        '<div id="duka-ai-market-intel-page-marker" aria-hidden="true" '
+        'style="position:absolute;width:0;height:0;overflow:hidden"></div>',
+        unsafe_allow_html=True,
+    )
+
     # Two-column layout: intel card left, chat panel right
     col_intel, col_chat = st.columns([3, 2], gap="large")
 
@@ -4727,14 +4907,31 @@ def render_market_intel_page() -> None:
         render_market_intelligence_section(report)
 
     with col_chat:
-        st.markdown("### 🌍 Ask the Market Agent")
-
         web_used = market.get("web_search_used", False)
-        sources  = market.get("sources", [])
+        sources = market.get("sources", [])
         if web_used:
-            st.caption(f"Grounded in {len(sources)} live web sources · Ask anything about your market")
+            sub_line = (
+                f"Grounded in {len(sources)} live web sources · "
+                "Ask anything about your market"
+            )
         else:
-            st.caption("Ask anything about your business's market conditions in Zambia")
+            sub_line = "Ask anything about your business's market conditions in Zambia"
+
+        st.markdown(
+            '<div id="duka-ai-market-intel-chat-anchor"></div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            '<div class="duka-forecast-convo-card">'
+            '<div class="duka-forecast-convo-head">'
+            '<span class="duka-forecast-convo-title">🌍 Ask the Market Agent</span>'
+            '<span class="duka-forecast-convo-sub">'
+            f"{html.escape(sub_line)}"
+            "</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
         # Suggestion pills
         sugg_pills = [
@@ -4753,13 +4950,34 @@ def render_market_intel_page() -> None:
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
-        # Chat history
+        # Chat history (same card shell as Cash Flow Forecast conversation)
         if "market_chat" not in st.session_state:
             st.session_state["market_chat"] = []
 
+        if not st.session_state["market_chat"]:
+            st.markdown(
+                '<div class="duka-forecast-empty">No messages yet — tap a suggestion '
+                "or type below.</div>",
+                unsafe_allow_html=True,
+            )
+
         for msg in st.session_state["market_chat"]:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
+            if msg["role"] == "user":
+                escaped = (
+                    msg["content"]
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                )
+                st.markdown(
+                    f'<div class="user-bubble-wrap"><div class="user-bubble">{escaped}</div></div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                with st.chat_message("assistant", avatar="🌍"):
+                    st.markdown(msg["content"])
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
         user_q = st.chat_input("Ask about your market...", key="market_chat_input")
         if st.session_state.get("market_question"):
@@ -4775,7 +4993,12 @@ def render_market_intel_page() -> None:
                     report,
                 )
             st.session_state["market_chat"].append({"role": "assistant", "content": reply})
+            st.session_state["market_pin_to_question"] = True
             st.rerun()
+
+        # ChatGPT-style scroll: pin the user's last question to top after a reply
+        if st.session_state.pop("market_pin_to_question", False):
+            inject_pin_to_question_scroll()
 
 
 def render_settings_page(settings: Any) -> None:
@@ -4855,6 +5078,12 @@ def apply_custom_styles() -> None:
             }}
             /* Cash Flow Forecast: use a comfortable wide canvas */
             body:has(#duka-ai-forecast-page-marker) .block-container {{
+                max-width: min(1480px, 94vw) !important;
+                padding-left: 1.35rem !important;
+                padding-right: 1.35rem !important;
+                padding-bottom: 6rem !important;
+            }}
+            body:has(#duka-ai-market-intel-page-marker) .block-container {{
                 max-width: min(1480px, 94vw) !important;
                 padding-left: 1.35rem !important;
                 padding-right: 1.35rem !important;
@@ -5603,6 +5832,9 @@ def apply_custom_styles() -> None:
             #duka-ai-forecast-analysis-anchor {{
                 scroll-margin-top: 5.5rem;
             }}
+            #duka-ai-market-intel-chat-anchor {{
+                scroll-margin-top: 5.5rem;
+            }}
             .duka-forecast-analyst {{
                 border: 1px solid rgba(148, 163, 184, 0.2);
                 border-radius: 14px;
@@ -5668,6 +5900,24 @@ def apply_custom_styles() -> None:
                 color: #F1F5F9 !important;
             }}
             body:has(#duka-ai-forecast-page-marker) [data-testid="stChatInput"] {{
+                background: rgba(15, 23, 42, 0.85) !important;
+                border-radius: 14px !important;
+                border: 1px solid rgba(148, 163, 184, 0.22) !important;
+            }}
+            body:has(#duka-ai-market-intel-page-marker) .duka-forecast-convo-card [data-testid="stChatMessage"] {{
+                background: rgba(15, 23, 42, 0.7) !important;
+                border: 1px solid rgba(148, 163, 184, 0.18) !important;
+                border-radius: 14px !important;
+                padding: 0.6rem 0.8rem 0.7rem !important;
+                margin-bottom: 0.7rem !important;
+            }}
+            body:has(#duka-ai-market-intel-page-marker) .duka-forecast-convo-card [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p,
+            body:has(#duka-ai-market-intel-page-marker) .duka-forecast-convo-card [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] li {{
+                font-size: 1.02rem !important;
+                line-height: 1.62 !important;
+                color: #F1F5F9 !important;
+            }}
+            body:has(#duka-ai-market-intel-page-marker) [data-testid="stChatInput"] {{
                 background: rgba(15, 23, 42, 0.85) !important;
                 border-radius: 14px !important;
                 border: 1px solid rgba(148, 163, 184, 0.22) !important;
@@ -6191,18 +6441,44 @@ def apply_custom_styles() -> None:
                 justify-content: flex-end;
                 margin: 0.6rem 0 0.9rem 0;
                 padding-left: 3rem;
+                gap: 0.55rem;
+                align-items: flex-end;
             }}
             .user-bubble {{
-                background: #2F2F2F;
-                color: #ECECEC;
-                border-radius: 18px;
-                padding: 0.65rem 1rem;
+                background: linear-gradient(135deg, #1D9E75 0%, #14B783 60%, #2563EB 140%);
+                color: #FFFFFF;
+                border-radius: 18px 18px 4px 18px;
+                padding: 0.7rem 1.05rem;
                 max-width: 75%;
                 font-size: 0.95rem;
                 line-height: 1.55;
                 word-wrap: break-word;
-                box-shadow: none;
-                border: 1px solid rgba(255,255,255,0.04);
+                box-shadow: 0 4px 14px rgba(29, 158, 117, 0.22);
+                border: 1px solid rgba(255,255,255,0.08);
+                font-weight: 500;
+            }}
+            /* Polished avatars for st.chat_message (assistant) */
+            [data-testid="stChatMessageAvatarAssistant"] {{
+                background: linear-gradient(135deg, #1D9E75, #2563EB) !important;
+                color: #FFFFFF !important;
+                border: 1px solid rgba(255,255,255,0.15) !important;
+                box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28) !important;
+                width: 34px !important;
+                height: 34px !important;
+                border-radius: 50% !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                font-size: 1.05rem !important;
+            }}
+            [data-testid="stChatMessageAvatarUser"] {{
+                background: linear-gradient(135deg, #475569, #1E293B) !important;
+                color: #F8FAFC !important;
+                border: 1px solid rgba(255,255,255,0.12) !important;
+                width: 34px !important;
+                height: 34px !important;
+                border-radius: 50% !important;
+                font-size: 1rem !important;
             }}
             /* Inline metrics strip */
             .inline-metrics {{
@@ -6718,6 +6994,19 @@ def apply_custom_styles() -> None:
                 flex: 1 1 auto;
                 min-height: 4.6em;
             }}
+            .woc-badge {{
+                display: inline-block;
+                background: linear-gradient(135deg, #F59E0B, #EAB308);
+                color: #1F2937;
+                font-size: 0.65rem;
+                font-weight: 800;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                padding: 0.18rem 0.55rem;
+                border-radius: 999px;
+                margin-bottom: 0.6rem;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+            }}
             /* Welcome triad: equal column height, buttons on one baseline */
             div[data-testid="stHorizontalBlock"]:has(.welcome-option-card) {{
                 align-items: stretch !important;
@@ -7053,6 +7342,46 @@ def apply_custom_styles() -> None:
     )
 
 
+def inject_pin_to_question_scroll() -> None:
+    """ChatGPT-style scroll: pin the LATEST .user-bubble-wrap to the top of
+    the viewport and bow out the moment the user shows scroll intent.
+
+    Reusable across Chat Advisor, Cash Flow Forecast chat, Market Intel chat,
+    or any other page that uses the .user-bubble-wrap right-aligned bubble
+    pattern. Safe to call multiple times per render — only the most recent
+    invocation is meaningful.
+    """
+    components.html(
+        """
+        <script>
+        (function() {
+            var win = window.parent;
+            var doc = win.document;
+            function pinToQuestion() {
+                var nodes = doc.querySelectorAll('.user-bubble-wrap');
+                if (!nodes.length) return;
+                var el = nodes[nodes.length - 1];
+                try {
+                    el.scrollIntoView({ behavior: 'auto', block: 'start', inline: 'nearest' });
+                } catch (e) {
+                    try { el.scrollIntoView(true); } catch (e2) {}
+                }
+            }
+            var cancelled = false;
+            ['wheel', 'touchmove', 'keydown', 'mousedown'].forEach(function(ev) {
+                win.addEventListener(ev, function() { cancelled = true; }, { passive: true, once: true });
+            });
+            [0, 80, 220, 480, 800, 1300].forEach(function(d) {
+                win.setTimeout(function() { if (!cancelled) pinToQuestion(); }, d);
+            });
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 def inject_navigation_loader() -> None:
     """Full-screen loader when switching sidebar pages (injected into parent document)."""
     components.html(
@@ -7069,40 +7398,79 @@ def inject_navigation_loader() -> None:
                 return;
             }
             var doc = root.document;
-            if (root.__dukaNavLoaderReady) {
+            // Versioned flag — bump suffix when loader markup/CSS changes so
+            // existing sessions pick up the new design instead of being stuck
+            // on the previous one cached on window.parent.
+            var LOADER_VERSION = "duka-nav-loader-v3";
+            if (root.__dukaNavLoaderVersion === LOADER_VERSION) {
                 return;
             }
-            root.__dukaNavLoaderReady = true;
+            // Old version present — purge stale overlay/style before re-init.
+            try {
+                var staleOverlay = doc.getElementById("duka-nav-loader-overlay");
+                if (staleOverlay && staleOverlay.parentNode) {
+                    staleOverlay.parentNode.removeChild(staleOverlay);
+                }
+                var staleStyle = doc.getElementById("duka-nav-loader-style");
+                if (staleStyle && staleStyle.parentNode) {
+                    staleStyle.parentNode.removeChild(staleStyle);
+                }
+            } catch (e) {}
+            root.__dukaNavLoaderVersion = LOADER_VERSION;
 
             var css = doc.createElement("style");
+            css.id = "duka-nav-loader-style";
             css.textContent =
                 "#duka-nav-loader-overlay{" +
                 "display:none;position:fixed;inset:0;z-index:2147483646;" +
-                "background:rgba(13,17,23,0.82);backdrop-filter:blur(10px);" +
-                "-webkit-backdrop-filter:blur(10px);flex-direction:column;" +
-                "align-items:center;justify-content:center;gap:1rem;" +
-                "pointer-events:none;" +
+                "background:radial-gradient(circle at 50% 45%, rgba(29,158,117,0.18) 0%, rgba(13,17,23,0.92) 60%);" +
+                "backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);" +
+                "flex-direction:column;align-items:center;justify-content:center;gap:1.1rem;" +
+                "pointer-events:none;animation:dukaNavFadeIn 0.18s ease-out;" +
                 "}" +
+                "@keyframes dukaNavFadeIn{from{opacity:0;}to{opacity:1;}}" +
                 "#duka-nav-loader-overlay.duka-nav-visible{display:flex !important;}" +
-                ".duka-nav-loader-spinner{width:52px;height:52px;border-radius:50%;" +
-                "border:3px solid rgba(29,158,117,0.22);border-top-color:#1D9E75;" +
-                "animation:dukaNavSpin 0.78s linear infinite;}" +
+                ".duka-nav-loader-card{display:flex;flex-direction:column;align-items:center;" +
+                "gap:0.85rem;padding:1.6rem 2.4rem 1.5rem;border-radius:22px;" +
+                "background:rgba(15,23,42,0.7);border:1px solid rgba(29,158,117,0.32);" +
+                "box-shadow:0 20px 50px rgba(0,0,0,0.45),inset 0 1px 0 rgba(255,255,255,0.04);}" +
+                ".duka-nav-loader-orb{position:relative;width:64px;height:64px;}" +
+                ".duka-nav-loader-orb::before,.duka-nav-loader-orb::after{" +
+                "content:'';position:absolute;inset:0;border-radius:50%;" +
+                "border:3px solid transparent;}" +
+                ".duka-nav-loader-orb::before{" +
+                "border-top-color:#1D9E75;border-right-color:rgba(29,158,117,0.4);" +
+                "animation:dukaNavSpin 0.95s cubic-bezier(0.5,0,0.5,1) infinite;}" +
+                ".duka-nav-loader-orb::after{" +
+                "border-bottom-color:#378ADD;border-left-color:rgba(55,138,221,0.35);" +
+                "animation:dukaNavSpin 1.4s cubic-bezier(0.5,0,0.5,1) infinite reverse;" +
+                "inset:8px;}" +
+                ".duka-nav-loader-mark{position:absolute;inset:0;display:flex;" +
+                "align-items:center;justify-content:center;font-size:1.4rem;" +
+                "background:linear-gradient(135deg,#1D9E75,#378ADD);" +
+                "-webkit-background-clip:text;-webkit-text-fill-color:transparent;" +
+                "background-clip:text;font-weight:900;}" +
                 "@keyframes dukaNavSpin{to{transform:rotate(360deg);}}" +
-                ".duka-nav-loader-dots{display:flex;gap:7px;margin-top:2px;}" +
+                ".duka-nav-loader-dots{display:flex;gap:8px;}" +
                 ".duka-nav-loader-dots span{width:7px;height:7px;border-radius:50%;" +
                 "background:linear-gradient(135deg,#378ADD,#1D9E75);" +
-                "animation:dukaNavDot 1.15s ease-in-out infinite;opacity:0.45;}" +
-                ".duka-nav-loader-dots span:nth-child(2){animation-delay:0.18s;}" +
-                ".duka-nav-loader-dots span:nth-child(3){animation-delay:0.36s;}" +
+                "animation:dukaNavDot 1.2s ease-in-out infinite;opacity:0.45;" +
+                "box-shadow:0 0 8px rgba(29,158,117,0.4);}" +
+                ".duka-nav-loader-dots span:nth-child(2){animation-delay:0.2s;}" +
+                ".duka-nav-loader-dots span:nth-child(3){animation-delay:0.4s;}" +
                 "@keyframes dukaNavDot{" +
-                "0%,100%{opacity:0.35;transform:scale(0.88);}" +
-                "50%{opacity:1;transform:scale(1);}" +
+                "0%,100%{opacity:0.35;transform:scale(0.85);}" +
+                "50%{opacity:1;transform:scale(1.1);}" +
                 "}" +
                 ".duka-nav-loader-label{font-size:0.72rem;font-weight:800;" +
-                "letter-spacing:0.22em;text-transform:uppercase;" +
-                "color:rgba(167,243,208,0.88);margin-top:0.35rem;}" +
-                ".duka-nav-loader-sub{font-size:0.76rem;color:rgba(148,163,184,0.9);" +
-                "margin-top:0.15rem;font-weight:500;}";
+                "letter-spacing:0.24em;text-transform:uppercase;" +
+                "background:linear-gradient(90deg,#A7F3D0,#FFFFFF,#A7F3D0);" +
+                "-webkit-background-clip:text;-webkit-text-fill-color:transparent;" +
+                "background-clip:text;background-size:200% 100%;" +
+                "animation:dukaNavShine 2.4s linear infinite;}" +
+                "@keyframes dukaNavShine{from{background-position:200% 0;}to{background-position:-200% 0;}}" +
+                ".duka-nav-loader-sub{font-size:0.78rem;color:rgba(148,163,184,0.92);" +
+                "font-weight:500;margin-top:-0.1rem;letter-spacing:0.02em;}";
             doc.head.appendChild(css);
 
             var overlay = doc.getElementById("duka-nav-loader-overlay");
@@ -7111,11 +7479,15 @@ def inject_navigation_loader() -> None:
                 overlay.id = "duka-nav-loader-overlay";
                 overlay.setAttribute("aria-live", "polite");
                 overlay.innerHTML =
-                    '<div class="duka-nav-loader-spinner"></div>' +
+                    '<div class="duka-nav-loader-card">' +
+                    '<div class="duka-nav-loader-orb">' +
+                    '<div class="duka-nav-loader-mark">D</div>' +
+                    '</div>' +
                     '<div class="duka-nav-loader-dots">' +
                     "<span></span><span></span><span></span></div>" +
-                    '<div class="duka-nav-loader-label">Opening</div>' +
-                    '<div class="duka-nav-loader-sub">Switching workspace…</div>';
+                    '<div class="duka-nav-loader-label">Loading workspace</div>' +
+                    '<div class="duka-nav-loader-sub">Preparing your view…</div>' +
+                    '</div>';
                 doc.body.appendChild(overlay);
             }
 
@@ -7231,6 +7603,9 @@ def main() -> None:
         render_welcome_screen(sample_cases)
         return
 
+    if st.session_state.get("analysis_report"):
+        st.session_state.pop("pending_demo_analysis_run", None)
+
     st.markdown(
         """
         <div style="text-align:center;padding:8px 0 4px;">
@@ -7253,6 +7628,29 @@ def main() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+    if st.session_state.pop("scroll_to_demo_analyze", False):
+        components.html(
+            """
+            <script>
+            window.setTimeout(function() {
+                var el = window.parent.document.getElementById("duka-ai-analyze-anchor");
+                if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); }
+            }, 120);
+            </script>
+            """,
+            height=0,
+            width=0,
+        )
+
+    if (
+        st.session_state.get("pending_demo_analysis_run")
+        and not st.session_state.get("analysis_report")
+    ):
+        with st.status("⚡ Demo analysis in progress…", expanded=True):
+            st.write("📂 Sample income statement loaded · **Lusaka Grocery Shop** profile applied.")
+            st.write("🧠 Starting all agents next — detailed steps appear in the panel below.")
+            st.caption("Stay on this page — the workspace scrolls to **Run Full Business Analysis** automatically.")
 
     # ── Powered-by indicator ───────────────────────────────────────────────────
     _provider = os.getenv("LLM_PROVIDER", "amd").strip().upper()
@@ -7281,15 +7679,24 @@ def main() -> None:
     _scroll_numbers = st.session_state.pop("scroll_to_numbers", False)
     if _did_prefill:
         if st.session_state.get("hide_example_prompts"):
-            st.success(
-                "✅ **Lusaka Grocery Shop** sample loaded — your story and figures are filled in above. "
-                "Upload a file below (optional) or jump to **Manual numbers**, then click **Run Full Business Analysis**."
-            )
+            if st.session_state.get("pending_demo_analysis_run"):
+                st.success(
+                    "✅ **Lusaka Grocery Shop** demo loaded — sample income statement + figures are applied. "
+                    "**Running full analysis automatically** — watch the progress panel below."
+                )
+            else:
+                st.success(
+                    "✅ **Lusaka Grocery Shop** sample loaded — your story and figures are filled in above. "
+                    "Upload a file below (optional) or jump to **Manual numbers**, then click **Run Full Business Analysis**."
+                )
         else:
             st.success(
                 "✅ Sample business loaded — review the details below and click **Run Full Business Analysis**"
             )
-        _scroll_id = "duka-ai-numbers-anchor" if _scroll_numbers else "duka-ai-form-anchor"
+        if st.session_state.get("pending_demo_analysis_run"):
+            _scroll_id = "duka-ai-analyze-anchor"
+        else:
+            _scroll_id = "duka-ai-numbers-anchor" if _scroll_numbers else "duka-ai-form-anchor"
         components.html(
             f"""
             <script>
@@ -7601,6 +8008,15 @@ def main() -> None:
                 '<div class="analyze-note">Runs all agents (cash flow, advisor, loan readiness, market, and summary).</div>',
                 unsafe_allow_html=True,
             )
+            # Auto-trigger when demo flow set the flag (judge-friendly one-click path).
+            if not analyze_clicked and st.session_state.pop("auto_run_demo", False):
+                analyze_clicked = True
+                st.info("✨ Demo data loaded — running full analysis automatically…")
+
+        # Allow downstream analyze branch to use the previously parsed sample
+        # document when no fresh st.file_uploader event has occurred.
+        if uploaded_analysis is None and st.session_state.get("parsed_document"):
+            uploaded_analysis = st.session_state.get("parsed_document")
 
         if analyze_clicked:
             # Immediately scroll to the status panel so user sees agents working
@@ -7732,6 +8148,7 @@ def main() -> None:
                     status.update(label="✅ Analysis complete! Scroll down to chat with your results.", state="complete", expanded=False)
 
                 st.session_state.analysis_report = report
+                st.session_state.pop("pending_demo_analysis_run", None)
                 _baseline = get_baseline(st.session_state)
                 st.session_state["baseline"] = _baseline
                 st.session_state["metrics"] = compute_metrics(_baseline) if _baseline else None
@@ -7827,11 +8244,12 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
         else:
-            with st.chat_message("assistant"):
+            agent_key = msg.get("agent", "")
+            avatar_icon = AGENT_LABELS.get(agent_key, ("✨", ""))[0] if agent_key else "✨"
+            with st.chat_message("assistant", avatar=avatar_icon):
                 if msg.get("type") == "initial_analysis" and report:
                     render_initial_analysis_in_chat(report)
                 else:
-                    agent_key = msg.get("agent", "")
                     if agent_key and agent_key in AGENT_LABELS:
                         icon, label = AGENT_LABELS[agent_key]
                         st.markdown(
@@ -7869,6 +8287,7 @@ def main() -> None:
                         followup_msg["chart"] = chart
                     st.session_state.messages.append(followup_msg)
                     st.session_state.last_agent = primary_agent
+                    st.session_state.scroll_to_chat_conversation = True
                     st.rerun()
 
     # ── Chat input with streaming ──────────────────────────────────────────────
@@ -7888,22 +8307,75 @@ def main() -> None:
             )
             st.session_state.messages.append({"role": "user", "content": prompt})
 
-            with st.chat_message("assistant"):
+            # ChatGPT-style anchoring: pin the user's question at the top of
+            # the viewport so the streaming response fills the screen below it.
+            # Hammered instant jumps in the first ~1.3s overpower Streamlit's
+            # scroll-restore on rerun. After that, the script BOWS OUT and lets
+            # the user scroll freely — never yanks them back up.
+            components.html(
+                """
+                <script>
+                (function() {
+                    var win = window.parent;
+                    var doc = win.document;
+                    function pinToQuestion() {
+                        var nodes = doc.querySelectorAll('.user-bubble-wrap');
+                        if (!nodes.length) return;
+                        var el = nodes[nodes.length - 1];
+                        try {
+                            el.scrollIntoView({
+                                behavior: 'auto',
+                                block: 'start',
+                                inline: 'nearest'
+                            });
+                        } catch (e) {
+                            try { el.scrollIntoView(true); } catch (e2) {}
+                        }
+                    }
+                    // Cancel any further pins as soon as user shows scroll intent
+                    // (wheel, touch, or arrow keys). This guarantees we never
+                    // fight the user's manual scroll.
+                    var cancelled = false;
+                    function cancel() { cancelled = true; }
+                    ['wheel', 'touchmove', 'keydown', 'mousedown'].forEach(function(ev) {
+                        win.addEventListener(ev, cancel, { passive: true, once: true });
+                    });
+                    // Hammered instant pins to land us on the question quickly.
+                    [0, 60, 150, 300, 550, 900, 1300].forEach(function(d) {
+                        win.setTimeout(function() {
+                            if (!cancelled) pinToQuestion();
+                        }, d);
+                    });
+                })();
+                </script>
+                """,
+                height=0,
+                width=0,
+            )
+
+            with st.chat_message("assistant", avatar=icon):
                 st.markdown(
                     f'<div class="agent-label">{icon} {label}</div>',
                     unsafe_allow_html=True,
                 )
 
                 if settings.llm_enabled:
-                    full_response = "".join(
-                        stream_followup_for_agent(
-                            primary_agent,
-                            prompt,
-                            report,
-                            st.session_state.messages,
-                        )
+                    # ChatGPT-style: stream tokens into the UI with typewriter effect + auto-follow scroll
+                    stream_gen = stream_followup_for_agent(
+                        primary_agent,
+                        prompt,
+                        report,
+                        st.session_state.messages,
                     )
-                    st.markdown(full_response)
+                    try:
+                        full_response = st.write_stream(stream_gen, cursor="▌")
+                    except TypeError:
+                        # Older Streamlit versions don't support `cursor` kwarg
+                        full_response = st.write_stream(stream_gen)
+                    if isinstance(full_response, list):
+                        full_response = "".join(str(x) for x in full_response)
+                    else:
+                        full_response = str(full_response or "")
                 else:
                     result = answer_followup_question(prompt, report, history=None)
                     full_response = result["answer"]
@@ -7927,7 +8399,51 @@ def main() -> None:
                 followup_msg["chart"] = chart
             st.session_state.messages.append(followup_msg)
             st.session_state.last_agent = primary_agent
+            st.session_state.scroll_to_chat_conversation = True
 
+    # Anchor at bottom of chat thread (kept for compatibility with other flows
+    # that may toggle scroll_to_chat_conversation).
+    st.markdown('<div id="duka-ai-chat-scroll-target"></div>', unsafe_allow_html=True)
+    if st.session_state.pop("scroll_to_chat_conversation", False):
+        # Pin the latest user question to the top of viewport (ChatGPT-style)
+        # so the response below it is visible. Bows out as soon as the user
+        # shows scroll intent.
+        components.html(
+            """
+            <script>
+            (function() {
+                var win = window.parent;
+                var doc = win.document;
+                function pinToLatestQuestion() {
+                    var nodes = doc.querySelectorAll('.user-bubble-wrap');
+                    if (!nodes.length) return false;
+                    var el = nodes[nodes.length - 1];
+                    try {
+                        el.scrollIntoView({
+                            behavior: 'auto',
+                            block: 'start',
+                            inline: 'nearest'
+                        });
+                    } catch (e) {
+                        try { el.scrollIntoView(true); } catch (e2) {}
+                    }
+                    return true;
+                }
+                var cancelled = false;
+                ['wheel', 'touchmove', 'keydown', 'mousedown'].forEach(function(ev) {
+                    win.addEventListener(ev, function() { cancelled = true; }, { passive: true, once: true });
+                });
+                [0, 80, 220, 480, 800, 1300].forEach(function(d) {
+                    win.setTimeout(function() {
+                        if (!cancelled) pinToLatestQuestion();
+                    }, d);
+                });
+            })();
+            </script>
+            """,
+            height=0,
+            width=0,
+        )
 
 
 if __name__ == "__main__":

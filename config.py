@@ -42,7 +42,7 @@ def get_settings() -> AppConfig:
         llm_provider=os.getenv("LLM_PROVIDER", "amd").strip().lower(),
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
         openai_base_url=os.getenv("OPENAI_BASE_URL", "").strip(),
-        amd_base_url=os.getenv("AMD_BASE_URL", "http://129.212.182.173:8000/v1").strip(),
+        amd_base_url=os.getenv("AMD_BASE_URL", "http://165.245.131.144:8000/v1").strip(),
         amd_api_key=os.getenv("AMD_API_KEY", "duka-ai-key").strip(),
         amd_model=os.getenv("AMD_MODEL", "Qwen/Qwen2.5-7B-Instruct").strip(),
         model_name=os.getenv("MODEL_NAME", "llama-3.3-70b-versatile").strip(),

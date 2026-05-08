@@ -107,17 +107,13 @@ def _normalize_currency(raw: Any) -> str:
     upper = s.upper()
     if "ZMW" in upper or "KWACHA" in upper or upper == "K":
         return "K"
-    if upper in {"USD", "US$", "$"}:
-        return "$"
-    if upper in {"EUR", "€"}:
-        return "€"
-    if upper in {"GBP", "£"}:
-        return "£"
+    if upper in {"USD", "US$", "$", "EUR", "€", "GBP", "£"}:
+        return "K"
     # Strip parentheticals like "Zambian Kwacha (K)" → "K"
     m = re.search(r"\(([^)]{1,3})\)", s)
     if m:
         return m.group(1)
-    return s[:3] if len(s) <= 3 else "K"
+    return "K"
 
 
 # ── Raw content extractors ─────────────────────────────────────────────────────

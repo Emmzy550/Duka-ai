@@ -11,6 +11,50 @@ from tools.financial_calculator import calculate_business_health_score, format_c
 from tools.text_parser import parse_business_input
 
 
+def _business_identity_snippet(business_profile: dict[str, Any] | None, parsed_data: dict[str, Any]) -> str:
+    """Human-readable business line for prompts — keeps summaries grounded."""
+    bp = business_profile or {}
+    bt = (bp.get("business_type") or "").strip()
+    loc = (bp.get("location") or "").strip()
+    ps = (bp.get("products_services") or "").strip()
+    parts: list[str] = []
+    if bt:
+        parts.append(bt)
+    elif parsed_data.get("business_type"):
+        parts.append(str(parsed_data["business_type"]).strip())
+    if loc:
+        parts.append(f"in {loc}")
+    if ps:
+        parts.append(f"selling/offering: {ps[:120]}")
+    return ", ".join(parts) if parts else "this SME (type not specified)"
+
+
+def _numeric_anchor_block(
+    *,
+    parsed_data: dict[str, Any],
+    cashflow: dict[str, Any],
+    business_health: dict[str, Any],
+    loan: dict[str, Any],
+) -> str:
+    """Exact figures the executive summary MUST quote — reduces generic hedging."""
+    rev = float(cashflow.get("revenue") or parsed_data.get("revenue") or 0)
+    exp = float(cashflow.get("expenses") or parsed_data.get("expenses") or 0)
+    profit = float(cashflow.get("profit") or 0)
+    margin = float(cashflow.get("profit_margin") or 0)
+    er = float(cashflow.get("expense_ratio") or 0)
+    debt = float(parsed_data.get("debt") or 0)
+    return (
+        f"Monthly revenue (use this label): {format_currency(rev)}\n"
+        f"Monthly expenses: {format_currency(exp)}\n"
+        f"Monthly profit: {format_currency(profit)}\n"
+        f"Profit margin: {margin:.1f}%\n"
+        f"Expense ratio (expenses/revenue): {er:.1f}%\n"
+        f"Outstanding debt: {format_currency(debt)}\n"
+        f"Business health score: {business_health.get('score')}/100 — {business_health.get('status')}\n"
+        f"Loan readiness score: {loan.get('loan_readiness_score')}/100\n"
+    )
+
+
 def _deduplicate_actions(actions: list[str]) -> list[str]:
     seen: set[str] = set()
     unique_actions: list[str] = []
@@ -72,8 +116,11 @@ def _generate_executive_summary(
     business_health: dict[str, Any],
     analysis_basis: list[str] | None,
     parsed_data: dict[str, Any] | None = None,
+    business_profile: dict[str, Any] | None = None,
 ) -> tuple[str, bool]:
-    top3_expenses, top3_total = _compute_top3_expense_summary(parsed_data or {})
+    pd = parsed_data or {}
+    bp = business_profile or {}
+    top3_expenses, top3_total = _compute_top3_expense_summary(pd)
     verified_expense_line = ""
     if top3_expenses:
         items_str = ", ".join(f"{k}: {format_currency(v)}" for k, v in top3_expenses)
@@ -82,19 +129,36 @@ def _generate_executive_summary(
             f" ({items_str}). Use this exact figure — do NOT recompute the sum yourself."
         )
 
+    identity = _business_identity_snippet(bp, pd)
+    anchors = _numeric_anchor_block(
+        parsed_data=pd, cashflow=cashflow, business_health=business_health, loan=loan
+    )
+
+    exec_system = """You are Duka AI's Executive Summary Agent. Write for an African SME owner in plain English.
+
+STRICT RULES:
+- ONE paragraph only (3–5 short sentences).
+- Sentence 1 MUST feel specific to THIS business: name the business type and city/area from BUSINESS IDENTITY when provided.
+- Sentence 1 MUST quote these exact figures using K for Kwacha (copy from NUMERIC ANCHORS): monthly revenue, expenses, profit, profit margin %, and outstanding debt. Do not substitute synonyms for the amounts.
+- Do NOT open with vague hedge language alone (e.g. "moderate cash flow situation", "thin profit margin", "faces challenges", "overall", "generally", "it appears that"). If you use qualitative words, they must appear together with the exact K amounts in the same sentence or right after.
+- Reference the biggest expense lever when TOP-3 expense lines are provided (name categories with K amounts).
+- Mention loan readiness briefly using the score supplied; no invented limits.
+- CRITICAL: Use ONLY numbers from the prompt — never compute new totals yourself."""
+
     llm_summary = request_llm(
-        "You are Duka AI's Executive Summary Agent. Write a short, natural, practical summary for an African SME owner in simple English. Lead with business health, profit, and next move. Mention borrowing only briefly at the end. CRITICAL: use ONLY the numbers supplied — never compute totals yourself.",
+        exec_system,
         (
-            f"Business health: {business_health['status']} ({business_health['score']}/100)\n"
-            f"Cash flow summary: {cashflow['summary']}\n"
-            f"Financial advice: {advisor['what_this_means']}\n"
-            f"Best next move: {advisor['best_next_move']}\n"
-            f"Borrowing summary: score {loan['loan_readiness_score']}/100, {loan['safe_borrowing_advice']}\n"
+            f"BUSINESS IDENTITY (use in sentence 1): {identity}\n\n"
+            f"NUMERIC ANCHORS (copy these amounts exactly — do not round differently):\n{anchors}\n"
+            f"Cash flow narrative (for context only — still anchor to NUMERIC ANCHORS):\n{cashflow.get('summary', '')}\n\n"
+            f"What this means (advisor): {advisor.get('what_this_means', '')}\n"
+            f"Best next move: {advisor.get('best_next_move', '')}\n"
+            f"Borrowing: score {loan.get('loan_readiness_score')}/100 — {loan.get('safe_borrowing_advice', '')}\n"
             f"Analysis notes: {' '.join(analysis_basis or [])}\n"
             f"{verified_expense_line}\n\n"
-            "Write one short paragraph only. Do NOT add up any numbers yourself."
+            "Write the single paragraph executive summary now."
         ),
-        max_tokens=180,
+        max_tokens=220,
     )
     return (llm_summary.strip() if llm_summary else "", bool(llm_summary))
 
@@ -186,6 +250,7 @@ def generate_business_report(
         business_health=business_health,
         analysis_basis=analysis_basis,
         parsed_data=parsed_data,
+        business_profile=business_profile or {},
     )
     if transaction_summary:
         final_summary += (
