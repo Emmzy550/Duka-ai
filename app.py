@@ -1876,7 +1876,19 @@ def _is_forecast_chart_request(q: str, prev_assistant_msg: str) -> bool:
 
 
 def _margin_band_colors(margins: list[float]) -> list[str]:
-    return ["#10B981" if v > 25 else ("#F59E0B" if v >= 15 else "#EF4444") for v in margins]
+    """SME-tuned bands: >20% healthy (green), 10–20% watch (amber),
+    0–10% thin (red), <0% loss (deep red). Aligns with health/loan scoring."""
+    out: list[str] = []
+    for v in margins:
+        if v <= 0:
+            out.append("#B91C1C")
+        elif v < 10:
+            out.append("#EF4444")
+        elif v < 20:
+            out.append("#F59E0B")
+        else:
+            out.append("#10B981")
+    return out
 
 
 def _build_forecast_page_chart(
@@ -2622,13 +2634,21 @@ def build_plotly_chart(chart_data: dict) -> go.Figure:
                 if is_margin
                 else f"%{{x}}: K%{{y:,.0f}}<extra>{name}</extra>"
             )
-            bar_colors = per_bar_colors if per_bar_colors else single_color
+            n_bars = len(values)
+            if per_bar_colors:
+                if len(per_bar_colors) < n_bars:
+                    last = per_bar_colors[-1] if per_bar_colors else single_color
+                    bar_colors = list(per_bar_colors) + [last] * (n_bars - len(per_bar_colors))
+                else:
+                    bar_colors = list(per_bar_colors)[:n_bars]
+            else:
+                bar_colors = [single_color] * n_bars
             fig.add_trace(go.Bar(
                 x=labels,
                 y=values,
                 name=name,
                 yaxis=yaxis_ref,
-                marker_color=bar_colors,
+                marker=dict(color=bar_colors, line=dict(width=0)),
                 hovertemplate=hover,
                 text=[f"{v:.1f}%" if is_margin else f"K{v:,.0f}" for v in values],
                 textposition="outside",
