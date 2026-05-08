@@ -2,7 +2,7 @@
 title: Duka AI
 emoji: 🛒
 colorFrom: gray
-colorTo: emerald
+colorTo: green
 sdk: docker
 pinned: false
 license: mit
