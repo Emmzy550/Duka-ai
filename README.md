@@ -1,3 +1,13 @@
+---
+title: Duka AI
+emoji: 🛒
+colorFrom: gray
+colorTo: emerald
+sdk: docker
+pinned: false
+license: mit
+---
+
 # Duka AI — SME Finance Workspace
 
 **FinAfrica / finafrica** — An AI-assisted financial advisor web application for **small and medium enterprises (SMEs)**, with a focus on **Zambia and African market context**. Owners describe their business, supply numbers or documents, and receive **cash-flow insight**, **loan readiness**, **market intelligence**, **forecasts**, **reports** (PDF/Excel), and a **conversational follow-up** workspace.
