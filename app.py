@@ -6652,9 +6652,23 @@ def apply_custom_styles() -> None:
                 margin-bottom: 0.5rem;
             }}
             .market-subhead {{
-                color: {THEME["text"]};
+                color: #F8FAFC;
                 font-weight: 800;
-                margin: 0.8rem 0 0.45rem;
+                font-size: 0.78rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                margin: 1rem 0 0.5rem;
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+            }}
+            .market-subhead::before {{
+                content: "";
+                display: inline-block;
+                width: 4px;
+                height: 14px;
+                background: linear-gradient(180deg, #34D399, #2563EB);
+                border-radius: 2px;
             }}
             .market-pill-row {{
                 display: flex;
@@ -6663,16 +6677,39 @@ def apply_custom_styles() -> None:
                 margin-bottom: 0.2rem;
             }}
             .market-pill {{
-                background: #FEF2F2;
-                border: 1px solid #FECACA;
-                color: {THEME["text"]};
+                background: rgba(239, 68, 68, 0.14);
+                border: 1px solid rgba(248, 113, 113, 0.45);
+                color: #FCA5A5;
                 border-radius: 999px;
-                padding: 0.42rem 0.72rem;
+                padding: 0.42rem 0.78rem;
                 font-size: 0.84rem;
+                font-weight: 600;
             }}
             .market-pill-blue {{
-                background: #EFF6FF;
-                border-color: #BFDBFE;
+                background: rgba(37, 99, 235, 0.16);
+                border-color: rgba(96, 165, 250, 0.45);
+                color: #93C5FD;
+            }}
+            .agent-card .agent-summary {{
+                color: #E5E7EB !important;
+                background: rgba(15, 23, 42, 0.55);
+                border: 1px solid rgba(148, 163, 184, 0.18);
+                border-left: 3px solid #34D399;
+                border-radius: 12px;
+                padding: 0.85rem 1rem;
+                font-size: 0.96rem;
+                line-height: 1.6;
+                margin: 0.4rem 0 0.4rem;
+            }}
+            .agent-card .agent-detail {{
+                background: rgba(15, 23, 42, 0.55) !important;
+                border: 1px solid rgba(148, 163, 184, 0.18) !important;
+                color: #E5E7EB !important;
+                border-radius: 12px;
+                padding: 0.78rem 0.95rem;
+                font-size: 0.94rem;
+                line-height: 1.55;
+                margin-bottom: 0.4rem;
             }}
             .chat-label {{
                 color: {THEME["muted"]};
