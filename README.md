@@ -19,22 +19,23 @@ license: mit
 ## Table of contents
 
 1. [What this project does](#what-this-project-does)
-2. [High-level architecture (sketch)](#high-level-architecture-sketch)
-3. [Analysis & agent pipeline (sketch)](#analysis--agent-pipeline-sketch)
-4. [User journey (sketch)](#user-journey-sketch)
-5. [Tech stack](#tech-stack)
-6. [Repository layout](#repository-layout)
-7. [Prerequisites](#prerequisites)
-8. [Installation](#installation)
-9. [Configuration (environment variables)](#configuration-environment-variables)
-10. [Running the application](#running-the-application)
-11. [Testing](#testing)
-12. [Data, samples, and templates](#data-samples-and-templates)
-13. [Reports and exports](#reports-and-exports)
-14. [Scheduling and email (optional)](#scheduling-and-email-optional)
-15. [Security and secrets](#security-and-secrets)
-16. [Troubleshooting](#troubleshooting)
-17. [Contributing and review](#contributing-and-review)
+2. [Hackathon demo and judging](#hackathon-demo-and-judging)
+3. [High-level architecture (sketch)](#high-level-architecture-sketch)
+4. [Analysis & agent pipeline (sketch)](#analysis--agent-pipeline-sketch)
+5. [User journey (sketch)](#user-journey-sketch)
+6. [Tech stack](#tech-stack)
+7. [Repository layout](#repository-layout)
+8. [Prerequisites](#prerequisites)
+9. [Installation](#installation)
+10. [Configuration (environment variables)](#configuration-environment-variables)
+11. [Running the application](#running-the-application)
+12. [Testing](#testing)
+13. [Data, samples, and templates](#data-samples-and-templates)
+14. [Reports and exports](#reports-and-exports)
+15. [Scheduling and email (optional)](#scheduling-and-email-optional)
+16. [Security and secrets](#security-and-secrets)
+17. [Troubleshooting](#troubleshooting)
+18. [Contributing and review](#contributing-and-review)
 
 ---
 
@@ -53,6 +54,38 @@ license: mit
 | **Settings** | App and provider-related configuration in the UI. |
 
 **Verified numbers:** Core KPIs and report figures are computed in **Python** (`tools/financial_engine.py`, calculators); LLM outputs are grounded in those values where applicable (see `agents/report_agent.py` design notes).
+
+---
+
+## Hackathon demo and judging
+
+Built for hackathons such as **[AMD Developer on lablab.ai](https://lablab.ai/ai-hackathons/amd-developer)** — an SME finance workspace in **Kwacha**, with a **live Hugging Face Space** so judges can try the app without uploading their own files.
+
+### What runs where (for reviewers)
+
+| Layer | Role |
+|-------|------|
+| **Python** (`tools/financial_engine.py`, parsers, calculators) | **Verified** revenue, expenses, profit, margins, forecasts, loan framing — every KPI the UI shows first. |
+| **LLM on AMD (OpenAI-compatible API)** | Configured via `LLM_PROVIDER`, `AMD_BASE_URL`, `AMD_MODEL`, `AMD_API_KEY`. Used for **narrative** — summaries, recommendations, specialist chat — **grounded** in the verified figures passed in prompts. |
+| **Optional Tavily** (`TAVILY_API_KEY`) | Live web snippets for **Market Intel** when the key is set on the host (e.g. Hugging Face Space secrets). |
+
+### Suggested 5-minute demo flow
+
+1. Open your **public Space URL** (deploy from this repo; see **`doc/huggingface-space-deploy.md`**).
+2. Click **Try Demo Analysis** — judges see loaders and a full multi-agent run without bringing documents.
+3. Walk through **Dashboard** → **Cash Flow Forecast** (chart + analyst chat) → **Expense Analyzer** (donut + **Expense Analyst** chat) → **Market Intel** → **Generate Report** → download **PDF / Excel**.
+4. Say explicitly in voiceover: **numbers are computed in Python**; the **AMD MI300X / vLLM** stack serves the model through the **OpenAI-compatible** endpoint (`AMD_BASE_URL`).
+
+### Why this stands out to judges
+
+- **African SME context** and **Kwacha (K)** end-to-end — not a generic USD demo.
+- **Verified math first**, AI explains — reduces hollow financial clichés.
+- **Product depth**: forecast, scenarios, loan tools, reports, and routed agents — not a single chat box.
+
+### Deployment notes
+
+- **GitHub** holds code only; **API keys never go in the repo** (use `.env` locally, **Space secrets** on Hugging Face).
+- Dockerized for Spaces (`Dockerfile`); configure secrets on the Space after push.
 
 ---
 
@@ -347,8 +380,8 @@ Tests live under `tests/` (e.g. document parser, follow-up agent, calculator, pa
 
 ## License
 
-Add a `LICENSE` file and reference it here if the project is open-sourced or distributed.
+This project is released under the **MIT License** — see the [`LICENSE`](LICENSE) file in the repository root.
 
 ---
 
-**Document version:** aligned with repository state as of **7 May 2026**. Update this file when adding major features, new env vars, or deployment targets.
+**Document version:** aligned with repository state as of **9 May 2026**. Update this file when adding major features, new env vars, or deployment targets.
