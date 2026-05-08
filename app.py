@@ -2521,8 +2521,16 @@ def _format_kwacha(v: float) -> str:
     return f"K{v:,.0f}"
 
 
+def _format_pct(v: float) -> str:
+    return f"{v:+.1f}%" if v else "0.0%"
+
+
 def _caption_for_forecast_chart(chart_data: dict, scenario_label: str | None = None) -> str:
-    """Generate a 1–2 sentence caption from a chart JSON when the model returned no prose."""
+    """Generate a multi-sentence breakdown from a chart JSON.
+
+    Used both when the model returns no prose and when its prose is too thin
+    (so the user always gets a numbered breakdown alongside the chart).
+    """
     try:
         title = (chart_data.get("title") or "").strip()
         data = chart_data.get("data") or {}
@@ -2532,9 +2540,15 @@ def _caption_for_forecast_chart(chart_data: dict, scenario_label: str | None = N
             return ""
 
         first, last = labels[0], labels[-1]
-        scen_suffix = f" under the {scenario_label} scenario" if scenario_label else ""
+        scen_suffix = f" under the **{scenario_label}** scenario" if scenario_label else ""
 
-        # Single-series shortcuts
+        def _delta_pct(v0: float, vN: float) -> str:
+            if v0 == 0:
+                return ""
+            pct = (vN - v0) / abs(v0) * 100
+            return f" ({pct:+.1f}%)"
+
+        # Single-series shortcuts ─────────────────────────────────────────────
         if len(datasets) == 1:
             d = datasets[0]
             name = (d.get("name") or "").strip() or title or "Series"
@@ -2545,17 +2559,23 @@ def _caption_for_forecast_chart(chart_data: dict, scenario_label: str | None = N
             v0, vN = vals[0], vals[-1]
             if is_pct:
                 trend = "improves" if vN > v0 else ("declines" if vN < v0 else "stays flat")
+                avg = sum(vals) / len(vals)
                 return (
-                    f"{name} {trend} from {v0:.1f}% in {first} to {vN:.1f}% in {last}{scen_suffix}."
+                    f"**{name}** {trend} from **{v0:.1f}%** in {first} to **{vN:.1f}%** in "
+                    f"{last}{scen_suffix} — average of **{avg:.1f}%** across the {len(vals)} months.\n\n"
+                    f"- **Highest:** {max(vals):.1f}%   ·   **Lowest:** {min(vals):.1f}%\n"
+                    f"- **Net change:** {_format_pct(vN - v0)}\n"
                 )
             trend = "rises" if vN > v0 else ("falls" if vN < v0 else "stays flat")
             total = sum(vals)
             return (
-                f"{name} {trend} from {_format_kwacha(v0)} in {first} to {_format_kwacha(vN)} "
-                f"in {last}{scen_suffix} (total {_format_kwacha(total)} across the period)."
+                f"**{name}** {trend} from **{_format_kwacha(v0)}** in {first} to "
+                f"**{_format_kwacha(vN)}** in {last}{scen_suffix}{_delta_pct(v0, vN)}.\n\n"
+                f"- **Total across the period:** {_format_kwacha(total)}\n"
+                f"- **Average per month:** {_format_kwacha(total / len(vals))}\n"
             )
 
-        # Two-series — typical revenue vs expenses or profit vs margin
+        # Two-series — typical revenue vs expenses, profit vs margin ─────────
         if len(datasets) == 2:
             a, b = datasets[0], datasets[1]
             name_a = (a.get("name") or "Series A").strip()
@@ -2563,15 +2583,48 @@ def _caption_for_forecast_chart(chart_data: dict, scenario_label: str | None = N
             va, vb = a.get("values") or [], b.get("values") or []
             if not va or not vb:
                 return ""
-            return (
-                f"{name_a} moves from {_format_kwacha(va[0])} to {_format_kwacha(va[-1])} while "
-                f"{name_b} moves from {_format_kwacha(vb[0])} to {_format_kwacha(vb[-1])} "
-                f"between {first} and {last}{scen_suffix}."
-            )
+            a_pct = "%" in name_a or "margin" in name_a.lower()
+            b_pct = "%" in name_b or "margin" in name_b.lower()
+            fmt_a = (lambda v: f"{v:.1f}%") if a_pct else _format_kwacha
+            fmt_b = (lambda v: f"{v:.1f}%") if b_pct else _format_kwacha
 
-        # Three-series fallback
-        names = ", ".join((d.get("name") or "?").strip() for d in datasets)
-        return f"{title or 'Forecast view'}: {names} from {first} to {last}{scen_suffix}."
+            lines = [
+                f"Here's how **{name_a}** and **{name_b}** move from {first} to "
+                f"{last}{scen_suffix}:",
+                "",
+                f"- **{name_a}:** {fmt_a(va[0])} → {fmt_a(va[-1])}"
+                + (f" {_delta_pct(va[0], va[-1])}" if not a_pct else f" ({(va[-1] - va[0]):+.1f} pts)"),
+                f"- **{name_b}:** {fmt_b(vb[0])} → {fmt_b(vb[-1])}"
+                + (f" {_delta_pct(vb[0], vb[-1])}" if not b_pct else f" ({(vb[-1] - vb[0]):+.1f} pts)"),
+            ]
+            # If looks like Revenue vs Expenses, add net (gap)
+            if not a_pct and not b_pct and len(va) == len(vb):
+                gap_first = va[0] - vb[0]
+                gap_last = va[-1] - vb[-1]
+                lines.append(
+                    f"- **Gap ({name_a} − {name_b}):** "
+                    f"{_format_kwacha(gap_first)} → {_format_kwacha(gap_last)}"
+                )
+            return "\n".join(lines)
+
+        # Three-series fallback (e.g. Revenue + Expenses + Profit) ───────────
+        try:
+            names = [(d.get("name") or "?").strip() for d in datasets]
+            firsts = [d.get("values", [None])[0] for d in datasets]
+            lasts = [d.get("values", [None])[-1] for d in datasets]
+            lines = [
+                f"Here's the breakdown from {first} to {last}{scen_suffix}:",
+                "",
+            ]
+            for n, v0, vN in zip(names, firsts, lasts):
+                if v0 is None or vN is None:
+                    continue
+                is_pct = "%" in n or "margin" in n.lower()
+                fmt = (lambda v: f"{v:.1f}%") if is_pct else _format_kwacha
+                lines.append(f"- **{n}:** {fmt(v0)} → {fmt(vN)}")
+            return "\n".join(lines)
+        except Exception:
+            return f"{title or 'Forecast view'}: {', '.join(names)} from {first} to {last}{scen_suffix}."
     except Exception:
         return ""
 
@@ -3083,10 +3136,22 @@ def render_cash_flow_forecast_page() -> None:
                 if fallback:
                     chart_data = fallback
 
-            # Make sure there is always readable prose alongside the chart
+            # Make sure there is always readable prose AND a real number
+            # breakdown alongside the chart. If the AI wrote a thin one-liner
+            # (e.g. "Here's a visual representation of the trends:") prepend
+            # the auto-generated multi-line breakdown so the user sees real
+            # figures before the chart.
             scen_label = forecast.get("scenario", {}).get("label")
-            if chart_data and (not clean_text or len(clean_text) < 10):
-                clean_text = _caption_for_forecast_chart(chart_data, scen_label)
+            if chart_data:
+                short_or_empty = (not clean_text) or len(clean_text) < 80
+                lacks_kwacha = "K" not in (clean_text or "")
+                if short_or_empty or lacks_kwacha:
+                    breakdown = _caption_for_forecast_chart(chart_data, scen_label)
+                    if breakdown:
+                        if clean_text and len(clean_text) >= 10:
+                            clean_text = breakdown + "\n\n" + clean_text
+                        else:
+                            clean_text = breakdown
 
             assistant_msg: dict[str, Any] = {"role": "assistant", "content": clean_text}
             if chart_data:
@@ -3278,36 +3343,216 @@ def get_expense_breakdown(report: dict[str, Any]) -> dict[str, float]:
     return {str(k).replace("_", " ").title(): float(v or 0) for k, v in doc_breakdown.items() if float(v or 0) > 0}
 
 
+def _expense_identity_reply() -> str:
+    return (
+        "I'm **Duka AI's Expense Analyst** — I focus only on **where your Kwacha is going**. "
+        "I work from the verified expense breakdown on this page (no guesses): I can rank your top "
+        "categories, show what % of revenue each one eats, and suggest **specific** cost cuts.\n\n"
+        "Try: *Which category is hurting me most?* · *How can I cut transport costs?* · "
+        "*Where should I trim 10% of expenses?*"
+    )
+
+
+def _build_expense_chat_context(
+    report: dict[str, Any], breakdown: dict[str, float], frame: "pd.DataFrame"
+) -> str:
+    cf = report.get("cashflow") or {}
+    revenue = float(cf.get("revenue", 0) or 0)
+    total_exp = float(frame["Amount"].sum())
+    rows = frame.sort_values("Amount", ascending=False).to_dict("records")
+
+    bp = report.get("business_profile") or {}
+    bt = (bp.get("business_type") or "").strip() or "SME"
+    loc = (bp.get("location") or "").strip() or "Zambia"
+
+    lines: list[str] = []
+    lines.append("VERIFIED EXPENSE BREAKDOWN (Python-computed, do NOT invent figures):\n")
+    lines.append(
+        f"- Business: {bt} · Location: {loc}\n"
+        f"- Monthly revenue: K{revenue:,.0f}\n"
+        f"- Total monthly expenses: K{total_exp:,.0f}"
+        + (f" ({total_exp / revenue * 100:.1f}% of revenue)\n" if revenue > 0 else "\n")
+    )
+    lines.append("- Categories (largest → smallest):\n")
+    for r in rows:
+        cat = str(r["Category"])
+        amt = float(r["Amount"])
+        pct_rev = (amt / revenue * 100) if revenue > 0 else 0.0
+        pct_exp = (amt / total_exp * 100) if total_exp > 0 else 0.0
+        lines.append(
+            f"  · {cat}: K{amt:,.0f}  ({pct_exp:.1f}% of expenses, {pct_rev:.1f}% of revenue)\n"
+        )
+    return "".join(lines)
+
+
+def _classify_expense_chat_input(question: str) -> str | None:
+    low = (question or "").lower().strip()
+    if not low:
+        return "empty"
+    if any(p in low for p in ("who are you", "what are you", "what do you do", "introduce yourself")):
+        return "identity"
+    if low in ("thanks", "thank you", "ty", "cheers", "ta"):
+        return "thanks"
+    return None
+
+
+def _handle_expense_question(
+    question: str,
+    report: dict,
+    breakdown: dict[str, float],
+    frame: "pd.DataFrame",
+    chat_history: list[dict],
+) -> str:
+    from agents import request_llm_chat
+
+    canned = _classify_expense_chat_input(question)
+    if canned == "identity":
+        return _expense_identity_reply()
+    if canned == "thanks":
+        return "Glad it helped — ask anything else about your expense breakdown."
+    if canned == "empty":
+        return "Type a question about your expense categories or how to cut them."
+
+    ctx = _build_expense_chat_context(report, breakdown, frame)
+    system = (
+        "You are **Duka AI's Expense Analyst** for **Zambian SMEs**. "
+        "You ONLY answer using the VERIFIED EXPENSE BREAKDOWN below — never invent categories or amounts. "
+        "When you reference a category, **always** quote its exact K amount and its % of revenue or % of expenses. "
+        "Be specific with cost-cutting advice (which line, by how much in K, and why it's realistic for that business type/location). "
+        "Use **K** for Kwacha. Reply in 3–6 short sentences or short bullets — no fluff.\n\n"
+        f"{ctx}"
+    )
+
+    messages = [
+        {"role": "system", "content": system},
+        *[{"role": m["role"], "content": m["content"]} for m in chat_history[-8:]],
+        {"role": "user", "content": question},
+    ]
+    result = request_llm_chat(messages, temperature=0.2, max_tokens=500)
+    return result or "I couldn't generate a response right now. Please try again."
+
+
 def render_expense_analyzer_page() -> None:
     render_page_header(
         "Expense Analyzer",
         "Break down where money is going and spot the biggest cost pressure.",
-        "Donut chart",
+        "Donut + AI agent",
     )
     report = require_report()
     if not report:
         return
+
+    st.markdown(
+        '<div id="duka-ai-expense-analyzer-page-marker" aria-hidden="true" '
+        'style="position:absolute;width:0;height:0;overflow:hidden"></div>',
+        unsafe_allow_html=True,
+    )
+
     cashflow = report["cashflow"]
     breakdown = get_expense_breakdown(report)
     if not breakdown:
         breakdown = {"Total expenses": float(cashflow["expenses"])}
         st.info("Detailed expense categories were not provided, so this view shows total expenses only.")
-    frame = pd.DataFrame([{"Category": k, "Amount": v} for k, v in breakdown.items()]).sort_values("Amount", ascending=False)
+    frame = pd.DataFrame(
+        [{"Category": k, "Amount": v} for k, v in breakdown.items()]
+    ).sort_values("Amount", ascending=False)
     top_row = frame.iloc[0]
-    metric_cols = st.columns(3)
-    metric_cols[0].metric("Total expenses", format_currency(float(frame["Amount"].sum())))
-    metric_cols[1].metric("Largest category", str(top_row["Category"]))
-    metric_cols[2].metric("Largest amount", format_currency(float(top_row["Amount"])))
-    st.dataframe(frame, use_container_width=True, hide_index=True)
-    fig = go.Figure(data=[go.Pie(labels=frame["Category"], values=frame["Amount"], hole=0.58)])
-    fig.update_layout(
-        height=380,
-        margin=dict(l=8, r=8, t=16, b=8),
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#E2E8F0", family="Segoe UI, Arial, sans-serif"),
-        legend=dict(orientation="h", y=-0.05),
-    )
-    st.plotly_chart(fig, use_container_width=True)
+
+    # Two-column layout: snapshot/chart left, AI agent chat right
+    col_chart, col_chat = st.columns([3, 2], gap="large")
+
+    with col_chart:
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Total expenses", format_currency(float(frame["Amount"].sum())))
+        metric_cols[1].metric("Largest category", str(top_row["Category"]))
+        metric_cols[2].metric("Largest amount", format_currency(float(top_row["Amount"])))
+        st.dataframe(frame, use_container_width=True, hide_index=True)
+        fig = go.Figure(data=[go.Pie(labels=frame["Category"], values=frame["Amount"], hole=0.58)])
+        fig.update_layout(
+            height=380,
+            margin=dict(l=8, r=8, t=16, b=8),
+            paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#E2E8F0", family="Segoe UI, Arial, sans-serif"),
+            legend=dict(orientation="h", y=-0.05),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_chat:
+        st.markdown(
+            '<div id="duka-ai-expense-analyzer-chat-anchor"></div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="duka-forecast-convo-card">'
+            '<div class="duka-forecast-convo-head">'
+            '<span class="duka-forecast-convo-title">🔍 Ask the Expense Analyst</span>'
+            '<span class="duka-forecast-convo-sub">'
+            "Grounded in your verified categories — no invented numbers."
+            "</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        sugg_pills = [
+            "🥇 Which category hurts me most?",
+            "✂️ Where can I cut 10%?",
+            "🚚 How do I reduce transport?",
+            "👥 Are wages too high?",
+            "💡 Which line saves me the most?",
+            "📉 What % of revenue goes to expenses?",
+        ]
+        p1, p2 = st.columns(2)
+        for idx, pill in enumerate(sugg_pills):
+            col = p1 if idx % 2 == 0 else p2
+            if col.button(pill, key=f"epill_{idx}", use_container_width=True):
+                st.session_state["expense_question"] = pill
+
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+        if "expense_chat" not in st.session_state:
+            st.session_state["expense_chat"] = []
+
+        if not st.session_state["expense_chat"]:
+            st.markdown(
+                '<div class="duka-forecast-empty">No messages yet — tap a suggestion '
+                "or type below.</div>",
+                unsafe_allow_html=True,
+            )
+
+        for msg in st.session_state["expense_chat"]:
+            if msg["role"] == "user":
+                escaped = (
+                    msg["content"]
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                )
+                st.markdown(
+                    f'<div class="user-bubble-wrap"><div class="user-bubble">{escaped}</div></div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                with st.chat_message("assistant", avatar="🔍"):
+                    st.markdown(msg["content"])
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        user_q = st.chat_input("Ask about your expenses...", key="expense_chat_input")
+        if st.session_state.get("expense_question"):
+            user_q = st.session_state.pop("expense_question")
+
+        if user_q:
+            st.session_state["expense_chat"].append({"role": "user", "content": user_q})
+            with st.spinner("🔍 Analyzing your expenses…"):
+                reply = _handle_expense_question(
+                    user_q, report, breakdown, frame, st.session_state["expense_chat"]
+                )
+            st.session_state["expense_chat"].append({"role": "assistant", "content": reply})
+            st.session_state["expense_pin_to_question"] = True
+            st.rerun()
+
+        if st.session_state.pop("expense_pin_to_question", False):
+            inject_pin_to_question_scroll()
 
 
 def build_report_text(report: dict[str, Any]) -> str:
@@ -5109,6 +5354,12 @@ def apply_custom_styles() -> None:
                 padding-right: 1.35rem !important;
                 padding-bottom: 6rem !important;
             }}
+            body:has(#duka-ai-expense-analyzer-page-marker) .block-container {{
+                max-width: min(1480px, 94vw) !important;
+                padding-left: 1.35rem !important;
+                padding-right: 1.35rem !important;
+                padding-bottom: 6rem !important;
+            }}
             .duka-forecast-dashboard {{
                 margin-bottom: 0.4rem;
             }}
@@ -5936,6 +6187,24 @@ def apply_custom_styles() -> None:
                 font-size: 1.02rem !important;
                 line-height: 1.62 !important;
                 color: #F1F5F9 !important;
+            }}
+            body:has(#duka-ai-expense-analyzer-page-marker) .duka-forecast-convo-card [data-testid="stChatMessage"] {{
+                background: rgba(15, 23, 42, 0.7) !important;
+                border: 1px solid rgba(148, 163, 184, 0.18) !important;
+                border-radius: 14px !important;
+                padding: 0.6rem 0.8rem 0.7rem !important;
+                margin-bottom: 0.7rem !important;
+            }}
+            body:has(#duka-ai-expense-analyzer-page-marker) .duka-forecast-convo-card [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p,
+            body:has(#duka-ai-expense-analyzer-page-marker) .duka-forecast-convo-card [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] li {{
+                font-size: 1.02rem !important;
+                line-height: 1.62 !important;
+                color: #F1F5F9 !important;
+            }}
+            body:has(#duka-ai-expense-analyzer-page-marker) [data-testid="stChatInput"] {{
+                background: rgba(15, 23, 42, 0.85) !important;
+                border-radius: 14px !important;
+                border: 1px solid rgba(148, 163, 184, 0.22) !important;
             }}
             body:has(#duka-ai-market-intel-page-marker) [data-testid="stChatInput"] {{
                 background: rgba(15, 23, 42, 0.85) !important;
