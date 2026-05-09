@@ -1,12 +1,3 @@
----
-title: Duka AI
-emoji: 🛒
-colorFrom: gray
-colorTo: green
-sdk: docker
-pinned: false
-license: mit
----
 
 # Duka AI — SME Finance Workspace
 
